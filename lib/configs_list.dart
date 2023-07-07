@@ -18,17 +18,13 @@ class _ConfigsListState extends State<ConfigsList> {
   late List<Widget> configTiles;
 
   void updateConfigs() {
-    setState(() {
-      configs = box.values.toList().cast<Config>();
-    });
+    setState(() => configs = box.values.toList().cast<Config>());
   }
 
   void updateConfigsTiles() {
-    setState(() {
-      configTiles = configs.map((config) {
-        return CupertinoListTile(
-          onTap: () => {
-            Navigator.push(
+    setState(() => configTiles = configs.map((config) {
+          return CupertinoListTile(
+            onTap: () => Navigator.push(
               context,
               CupertinoPageRoute(
                 builder: (context) => NewConfig(
@@ -39,20 +35,18 @@ class _ConfigsListState extends State<ConfigsList> {
             ).then((value) {
               updateConfigs();
               updateConfigsTiles();
-            })
-          },
-          title: Text(
-            config.name,
-            style: const TextStyle(
-              fontSize: 20,
-              color: Colors.white,
+            }),
+            title: Text(
+              config.name,
+              style: const TextStyle(
+                fontSize: 20,
+                color: Colors.white,
+              ),
             ),
-          ),
-          subtitle: Text(config.host),
-          trailing: Text(config.port.toString()),
-        );
-      }).toList();
-    });
+            subtitle: Text(config.host),
+            trailing: Text(config.port.toString()),
+          );
+        }).toList());
   }
 
   @override
