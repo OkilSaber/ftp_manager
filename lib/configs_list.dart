@@ -23,28 +23,55 @@ class _ConfigsListState extends State<ConfigsList> {
 
   void updateConfigsTiles() {
     setState(() => configTiles = configs.map((config) {
-          return CupertinoListTile(
-            onTap: () => Navigator.push(
-              context,
-              CupertinoPageRoute(
-                builder: (context) => NewConfig(
-                  edit: true,
-                  config: config,
+          return GestureDetector(
+            onLongPress: () {
+              showDialog(
+                context: context,
+                builder: (context) => CupertinoAlertDialog(
+                  title: const Text("Delete config?"),
+                  content: const Text(
+                      "Are you sure you want to delete this config?"),
+                  actions: [
+                    CupertinoDialogAction(
+                      child: const Text("Cancel"),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    CupertinoDialogAction(
+                      child: const Text("Delete"),
+                      onPressed: () {
+                        box.deleteAt(box.values.toList().indexOf(config));
+                        updateConfigs();
+                        updateConfigsTiles();
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
+            child: CupertinoListTile(
+              onTap: () => Navigator.push(
+                context,
+                CupertinoPageRoute(
+                  builder: (context) => NewConfig(
+                    edit: true,
+                    config: config,
+                  ),
+                ),
+              ).then((value) {
+                updateConfigs();
+                updateConfigsTiles();
+              }),
+              title: Text(
+                config.name,
+                style: const TextStyle(
+                  fontSize: 20,
+                  color: Colors.white,
                 ),
               ),
-            ).then((value) {
-              updateConfigs();
-              updateConfigsTiles();
-            }),
-            title: Text(
-              config.name,
-              style: const TextStyle(
-                fontSize: 20,
-                color: Colors.white,
-              ),
+              subtitle: Text(config.host),
+              trailing: Text(config.port.toString()),
             ),
-            subtitle: Text(config.host),
-            trailing: Text(config.port.toString()),
           );
         }).toList());
   }

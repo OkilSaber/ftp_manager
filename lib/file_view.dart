@@ -50,7 +50,7 @@ class _FileViewState extends State<FileView> {
         elevation: 0,
         actions: [
           IconButton(
-            onPressed: () => {},
+            onPressed: () => {loadDirectory()},
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],

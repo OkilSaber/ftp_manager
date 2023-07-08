@@ -68,7 +68,10 @@ class _HomePageState extends State<HomePage> {
                 CupertinoPageRoute(
                   builder: (context) => const ConfigsList(),
                 ),
-              )
+              ).then((value) {
+                updateConfigs();
+                updateConfigsTiles();
+              })
             },
             icon: const Icon(Icons.language_rounded),
           ),
