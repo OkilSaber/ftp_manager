@@ -35,9 +35,12 @@ class _HomePageState extends State<HomePage> {
             },
             title: Text(
               config.name,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 20,
-                color: Colors.white,
+                color:
+                    MediaQuery.of(context).platformBrightness == Brightness.dark
+                        ? Colors.white
+                        : Colors.black,
               ),
             ),
             subtitle: Text(config.host),
@@ -78,6 +81,7 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
       body: CupertinoListSection(
+        header: const Text("Configurations"),
         children: configTiles,
       ),
     );

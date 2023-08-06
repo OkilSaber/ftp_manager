@@ -64,9 +64,12 @@ class _ConfigsListState extends State<ConfigsList> {
               }),
               title: Text(
                 config.name,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 20,
-                  color: Colors.white,
+                  color: MediaQuery.of(context).platformBrightness ==
+                          Brightness.dark
+                      ? Colors.white
+                      : Colors.black,
                 ),
               ),
               subtitle: Text(config.host),
@@ -116,6 +119,7 @@ class _ConfigsListState extends State<ConfigsList> {
         ],
       ),
       body: CupertinoListSection(
+        header: const Text("Editer ou supprimer les configurations"),
         children: configTiles,
       ),
     );
