@@ -1,6 +1,8 @@
 // ignore_for_file: implementation_imports
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:ftp_manager/types/config.dart';
 import 'package:ftpconnect/ftpConnect.dart';
 import 'package:ftpconnect/src/ftp_entry.dart';
@@ -15,30 +17,140 @@ class FileView extends StatefulWidget {
 
 class _FileViewState extends State<FileView> {
   late FTPConnect ftpConnect;
-  late Future<List<FTPEntry>> files = Future(() => []);
-  late Future<String> currentDirectory = Future(() => "");
+  List<FTPEntry> files = [];
+  String currentDirectory = "/";
 
   void loadDirectory() {
-    setState(() {
-      files = ftpConnect.listDirectoryContent();
-      files.then((value) {
+    ftpConnect.listDirectoryContent().then((valueFiles) {
+      ftpConnect.currentDirectory().then((value) {
         setState(() {
-          currentDirectory = ftpConnect.currentDirectory();
+          currentDirectory = value;
+          files = valueFiles;
         });
+        Navigator.pop(context);
       });
     });
   }
 
+  void infoDialog(FTPEntry entry) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(entry.name),
+          content: Column(
+            mainAxisAlignment: MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                  "Type: ${entry.type == FTPEntryType.DIR ? "Directory" : "File"}"),
+              Text("Size: ${entry.size}"),
+              Text("Owner: ${entry.owner}"),
+              Text("Group: ${entry.group}"),
+              Text("Permissions: ${entry.permission}"),
+              Text("Last modified: ${entry.modifyTime}"),
+            ],
+          ),
+          actionsOverflowAlignment: OverflowBarAlignment.start,
+          actionsOverflowDirection: VerticalDirection.down,
+          actions: [
+            TextButton(
+              onPressed: () {
+                showDialog(
+                    context: context,
+                    builder: (context) {
+                      return AlertDialog(
+                        title: Text("Supprimer ${entry.name} ?"),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text("Annuler")),
+                          TextButton(
+                              onPressed: () {
+                                showLoaderDialog(context,
+                                    message: "Suppression...");
+                                if (entry.type == FTPEntryType.DIR) {
+                                  ftpConnect
+                                      .deleteDirectory(entry.name)
+                                      .then((value) {
+                                    Navigator.pop(context);
+                                    Navigator.pop(context);
+                                    showLoaderDialog(context);
+                                    loadDirectory();
+                                  });
+                                } else {
+                                  ftpConnect
+                                      .deleteFile(entry.name)
+                                      .then((value) {
+                                    loadDirectory();
+                                    Navigator.pop(context);
+                                    Navigator.pop(context);
+                                  });
+                                }
+                              },
+                              child: const Text("Supprimer")),
+                        ],
+                      );
+                    });
+              },
+              child: const Text("Supprimer"),
+            ),
+            TextButton(
+              onPressed: () {
+                String path = "$currentDirectory/${entry.name}";
+                Clipboard.setData(ClipboardData(text: path));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text("Copié dans le presse-papier"),
+                ));
+              },
+              child: const Text("Copier le chemin"),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Fermer"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void showLoaderDialog(BuildContext context,
+      {String message = "Chargement..."}) {
+    showDialog(
+      barrierDismissible: false,
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          content: Row(
+            children: [
+              const CircularProgressIndicator(),
+              Container(
+                margin: const EdgeInsets.only(left: 7),
+                child: Text(message),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void initState() {
-    ftpConnect = FTPConnect(
-      widget.config.host,
-      user: widget.config.username,
-      pass: widget.config.password,
-      port: widget.config.port,
-    );
-    ftpConnect.connect().then((value) => loadDirectory());
     super.initState();
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      showLoaderDialog(context);
+      ftpConnect = FTPConnect(
+        widget.config.host,
+        user: widget.config.username,
+        pass: widget.config.password,
+        port: widget.config.port,
+      );
+
+      ftpConnect.connect().then((value) => loadDirectory());
+    });
   }
 
   @override
@@ -50,77 +162,58 @@ class _FileViewState extends State<FileView> {
         elevation: 0,
         actions: [
           IconButton(
-            onPressed: () => {loadDirectory()},
+            onPressed: () {
+              showLoaderDialog(context);
+              loadDirectory();
+            },
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
       body: Column(
         children: [
-          FutureBuilder<String>(
-            future: currentDirectory,
-            builder: (context, snapshot) {
-              if (snapshot.hasData) {
-                if (snapshot.data! != "/" && snapshot.data!.isNotEmpty) {
-                  return GestureDetector(
-                    onTap: () {
-                      ftpConnect
-                          .changeDirectory("..")
-                          .then((value) => loadDirectory());
-                    },
-                    child: const ListTile(
-                      leading: Icon(Icons.folder_rounded),
-                      title: Text(".."),
-                    ),
-                  );
-                } else {
-                  return const Text("");
-                }
-              } else {
-                return const Center(
-                  child: CircularProgressIndicator(),
-                );
-              }
-            },
-          ),
+          (currentDirectory != "/"
+              ? GestureDetector(
+                  onTap: () {
+                    showLoaderDialog(context);
+                    ftpConnect.changeDirectory("..").then((value) {
+                      loadDirectory();
+                    });
+                  },
+                  child: const ListTile(
+                    leading: Icon(Icons.folder_rounded),
+                    title: Text(".."),
+                  ),
+                )
+              : Container()),
           Expanded(
-            child: FutureBuilder<List<FTPEntry>>(
-              future: files,
-              builder: (context, snapshot) {
-                if (snapshot.hasData) {
-                  return ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: snapshot.data!.length,
-                    itemBuilder: (context, index) {
-                      return GestureDetector(
-                        onTap: () {
-                          if (snapshot.data![index].type == FTPEntryType.DIR) {
-                            ftpConnect
-                                .changeDirectory(snapshot.data![index].name)
-                                .then((value) => loadDirectory());
-                          }
-                        },
-                        child: ListTile(
-                          leading:
-                              snapshot.data![index].type == FTPEntryType.DIR
-                                  ? const Icon(Icons.folder_rounded)
-                                  : const Icon(Icons.file_copy_rounded),
-                          title: Text(snapshot.data![index].name),
-                          subtitle: Text(
-                            "${snapshot.data![index].size} bytes",
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                } else {
-                  return const Center(
-                    child: CircularProgressIndicator(),
-                  );
-                }
-              },
-            ),
-          ),
+              child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: files.length,
+            itemBuilder: (context, index) {
+              return ListTile(
+                leading: files[index].type == FTPEntryType.DIR
+                    ? const Icon(Icons.folder_rounded)
+                    : const Icon(Icons.file_copy_rounded),
+                title: Text(files[index].name),
+                subtitle: Text(
+                  "${files[index].size} bytes",
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.info_rounded),
+                  onPressed: () => infoDialog(files[index]),
+                ),
+                onTap: () {
+                  if (files[index].type == FTPEntryType.DIR) {
+                    showLoaderDialog(context);
+                    ftpConnect.changeDirectory(files[index].name).then((value) {
+                      loadDirectory();
+                    });
+                  }
+                },
+              );
+            },
+          )),
         ],
       ),
     );

@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:ftp_manager/types/config.dart';
 import 'package:hive_flutter/adapters.dart';
 
@@ -81,8 +82,10 @@ class _ConfigsListState extends State<ConfigsList> {
 
   @override
   void initState() {
-    updateConfigs();
-    updateConfigsTiles();
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      updateConfigs();
+      updateConfigsTiles();
+    });
     super.initState();
   }
 

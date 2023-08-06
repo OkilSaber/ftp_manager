@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:ftp_manager/file_view.dart';
 import 'package:ftp_manager/types/config.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -15,8 +16,8 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final Box box = Hive.box<Config>('FTPConfigs');
-  late List<Config> configs;
-  late List<Widget> configTiles;
+  late List<Config> configs = [];
+  late List<Widget> configTiles = [];
 
   void updateConfigs() {
     setState(() => configs = box.values.toList().cast<Config>());
@@ -25,13 +26,13 @@ class _HomePageState extends State<HomePage> {
   void updateConfigsTiles() {
     setState(() => configTiles = configs.map((config) {
           return CupertinoListTile(
-            onTap: () => {
+            onTap: () {
               Navigator.push(
                 context,
                 CupertinoPageRoute(
                   builder: (context) => FileView(config: config),
                 ),
-              )
+              );
             },
             title: Text(
               config.name,
@@ -51,9 +52,11 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void initState() {
-    updateConfigs();
-    updateConfigsTiles();
     super.initState();
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      updateConfigs();
+      updateConfigsTiles();
+    });
   }
 
   @override
@@ -65,7 +68,7 @@ class _HomePageState extends State<HomePage> {
         elevation: 0,
         actions: [
           IconButton(
-            onPressed: () => {
+            onPressed: () {
               Navigator.push(
                 context,
                 CupertinoPageRoute(
@@ -74,7 +77,7 @@ class _HomePageState extends State<HomePage> {
               ).then((value) {
                 updateConfigs();
                 updateConfigsTiles();
-              })
+              });
             },
             icon: const Icon(Icons.language_rounded),
           ),

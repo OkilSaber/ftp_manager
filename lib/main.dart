@@ -8,6 +8,7 @@ void main() async {
   Hive.registerAdapter(ConfigAdapter());
   await Hive.initFlutter();
   await Hive.openBox<Config>('FTPConfigs');
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
