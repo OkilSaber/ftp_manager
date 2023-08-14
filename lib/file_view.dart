@@ -1,7 +1,6 @@
-// ignore_for_file: implementation_imports
+// ignore_for_file: implementation_imports, use_build_context_synchronously
 
 import 'dart:io';
-import 'dart:io' show Platform;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -268,6 +267,38 @@ class _FileViewState extends State<FileView> {
         elevation: 0,
         actions: (inSelection
             ? [
+                IconButton(
+                  onPressed: () {
+                    FilePicker.platform
+                        .getDirectoryPath()
+                        .then((String? value) async {
+                      if (value != null) {
+                        showLoaderDialog(context);
+                        for (var i = 0; i < files.length; i++) {
+                          if (files[i].selected) {
+                            if (files[i].entry.type == FTPEntryType.DIR) {
+                              Directory dir =
+                                  Directory("$value/${files[i].entry.name}");
+                              await ftpConnect.downloadDirectory(
+                                files[i].entry.name,
+                                dir,
+                              );
+                            } else {
+                              File file = File("$value/${files[i].entry.name}");
+                              await ftpConnect.downloadFile(
+                                files[i].entry.name,
+                                file,
+                              );
+                            }
+                          }
+                        }
+                        Navigator.pop(context);
+                        leaveSelection();
+                      }
+                    });
+                  },
+                  icon: const Icon(Icons.download_rounded),
+                ),
                 IconButton(
                   onPressed: () async {
                     showLoaderDialog(context);
