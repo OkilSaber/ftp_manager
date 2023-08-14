@@ -1,7 +1,7 @@
 // ignore_for_file: implementation_imports
 
 import 'dart:io';
-
+import 'dart:io' show Platform;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -182,22 +182,38 @@ class _FileViewState extends State<FileView> {
   }
 
   void uploadFile() {
-    Permission.manageExternalStorage.request().then((value) {
-      if (value.isGranted) {
-        FilePicker.platform
-            .pickFiles(allowMultiple: true)
-            .then((FilePickerResult? value) async {
-          if (value != null) {
-            showLoaderDialog(context);
-            for (var i = 0; i < value.files.length; i++) {
-              File chosenFile = File(value.files[i].path!);
-              await ftpConnect.uploadFileWithRetry(chosenFile, pRetryCount: 5);
+    if (Platform.isAndroid) {
+      Permission.manageExternalStorage.request().then((value) {
+        if (value.isGranted) {
+          FilePicker.platform
+              .pickFiles(allowMultiple: true)
+              .then((FilePickerResult? value) async {
+            if (value != null) {
+              showLoaderDialog(context);
+              for (var i = 0; i < value.files.length; i++) {
+                File chosenFile = File(value.files[i].path!);
+                await ftpConnect.uploadFileWithRetry(chosenFile,
+                    pRetryCount: 5);
+              }
+              await loadDirectory();
             }
-            await loadDirectory();
+          });
+        }
+      });
+    } else if (Platform.isIOS) {
+      FilePicker.platform
+          .pickFiles(allowMultiple: true)
+          .then((FilePickerResult? value) async {
+        if (value != null) {
+          showLoaderDialog(context);
+          for (var i = 0; i < value.files.length; i++) {
+            File chosenFile = File(value.files[i].path!);
+            await ftpConnect.uploadFileWithRetry(chosenFile, pRetryCount: 5);
           }
-        });
-      }
-    });
+          await loadDirectory();
+        }
+      });
+    }
   }
 
   bool checkSelection() {
