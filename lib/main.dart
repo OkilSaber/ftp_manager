@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'home_page.dart';
 import 'types/config.dart';
 
 void main() async {
   Hive.registerAdapter(ConfigAdapter());
-  await Hive.initFlutter();
-  await Hive.openBox<Config>('FTPConfigs');
   WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter((await getApplicationCacheDirectory()).path);
+  await Hive.openBox<Config>('FTPConfigs');
   runApp(const MyApp());
 }
 
