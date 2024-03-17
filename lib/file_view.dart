@@ -292,64 +292,38 @@ class _FileViewState extends State<FileView> {
             ? [
                 IconButton(
                   onPressed: () async {
+                    late Directory localDirectory;
                     if (Platform.isIOS) {
-                      Directory localDirectory =
-                          await getApplicationDocumentsDirectory();
-                      for (var i = 0; i < files.length; i++) {
-                        if (files[i].selected) {
-                          if (files[i].entry.type == FTPEntryType.DIR) {
-                            await directoryDownloader(
-                              localDirectory: localDirectory,
-                              remoteDirectory: files[i].entry.name,
-                            );
-                          } else {
-                            File file = File(
-                              "${localDirectory.path}/${files[i].entry.name}",
-                            );
-                            await showDownloaderDialog(
-                              context,
-                              name: "$currentDirectory/${files[i].entry.name}",
-                              file: file,
-                            );
-                          }
+                      localDirectory = await getApplicationDocumentsDirectory();
+                    } else {
+                      String? path =
+                          await FilePicker.platform.getDirectoryPath();
+                      if (path != null) {
+                        localDirectory = Directory.fromUri(Uri.parse(path));
+                      } else {
+                        return;
+                      }
+                    }
+                    for (var i = 0; i < files.length; i++) {
+                      if (files[i].selected) {
+                        if (files[i].entry.type == FTPEntryType.DIR) {
+                          await directoryDownloader(
+                            localDirectory: localDirectory,
+                            remoteDirectory: files[i].entry.name,
+                          );
+                        } else {
+                          File file = File(
+                            "${localDirectory.path}/${files[i].entry.name}",
+                          );
+                          await showDownloaderDialog(
+                            context,
+                            name: "$currentDirectory/${files[i].entry.name}",
+                            file: file,
+                          );
                         }
                       }
-                      // Navigator.pop(context);
-                      leaveSelection();
-                    } else {
-                      FilePicker.platform
-                          .getDirectoryPath()
-                          .then((String? value) async {
-                        if (value != null) {
-                          showLoaderDialog(context);
-                          for (var i = 0; i < files.length; i++) {
-                            if (files[i].selected) {
-                              if (files[i].entry.type == FTPEntryType.DIR) {
-                                Directory dir =
-                                    Directory("$value/${files[i].entry.name}");
-                                await ftpConnect.downloadDirectory(
-                                  files[i].entry.name,
-                                  dir,
-                                );
-                              } else {
-                                File file =
-                                    File("$value/${files[i].entry.name}");
-                                await ftpConnect.downloadFile(
-                                  files[i].entry.name,
-                                  file,
-                                  onProgress: (progressInPercent, totalReceived,
-                                      fileSize) {
-                                    setState(() {});
-                                  },
-                                );
-                              }
-                            }
-                          }
-                          Navigator.pop(context);
-                          leaveSelection();
-                        }
-                      });
                     }
+                    leaveSelection();
                   },
                   icon: const Icon(Icons.download_rounded),
                 ),
