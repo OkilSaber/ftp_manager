@@ -169,6 +169,33 @@ class _FileViewState extends State<FileView> {
     );
   }
 
+  Future<bool> showConfirmationDialog({
+    String title = "Êtes-vous sûr?",
+    String message = "Voulez vous vraiment supprimer ce fichier?",
+    String confirm = "Supprimer",
+    String cancel = "Annuler",
+  }) async {
+    return await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(confirm),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(cancel),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void uploadFile() {
     if (Platform.isAndroid) {
       Permission.manageExternalStorage.request().then((value) {
@@ -329,22 +356,25 @@ class _FileViewState extends State<FileView> {
                 ),
                 IconButton(
                   onPressed: () async {
-                    showLoaderDialog(context);
-                    for (var i = 0; i < files.length; i++) {
-                      if (files[i].selected) {
-                        if (files[i].entry.type == FTPEntryType.DIR) {
-                          await ftpConnect
-                              .deleteDirectory(files[i].entry.name)
-                              .then((value) {});
-                        } else {
-                          await ftpConnect
-                              .deleteFile(files[i].entry.name)
-                              .then((value) {});
+                    bool delete = await showConfirmationDialog();
+                    if (delete) {
+                      showLoaderDialog(context);
+                      for (var i = 0; i < files.length; i++) {
+                        if (files[i].selected) {
+                          if (files[i].entry.type == FTPEntryType.DIR) {
+                            await ftpConnect
+                                .deleteDirectory(files[i].entry.name)
+                                .then((value) {});
+                          } else {
+                            await ftpConnect
+                                .deleteFile(files[i].entry.name)
+                                .then((value) {});
+                          }
                         }
                       }
+                      await loadDirectory();
+                      leaveSelection();
                     }
-                    await loadDirectory();
-                    leaveSelection();
                   },
                   icon: const Icon(Icons.delete_rounded),
                 ),
@@ -363,36 +393,6 @@ class _FileViewState extends State<FileView> {
                 )
               ]
             : [
-                IconButton(
-                  onPressed: () async {
-                    await FilePicker.platform.clearTemporaryFiles();
-                    try {
-                      FilePicker.platform
-                          .getDirectoryPath()
-                          .then((String? value) async {});
-                    } catch (e) {
-                      showDialog(
-                        context: context,
-                        builder: (context) {
-                          return AlertDialog(
-                            title: const Text("Erreur"),
-                            content: Text(e.toString()),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: const Text("Fermer"),
-                              ),
-                            ],
-                          );
-                        },
-                      );
-                    }
-                    // print("Write");
-                    // Directory dir = await getApplicationDocumentsDirectory();
-                    // print(dir);
-                  },
-                  icon: const Icon(Icons.file_copy_rounded),
-                ),
                 IconButton(
                   onPressed: () {
                     uploadFile();
