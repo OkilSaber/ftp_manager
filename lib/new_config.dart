@@ -13,6 +13,7 @@ class NewConfig extends StatefulWidget {
 }
 
 class NewConfigState extends State<NewConfig> {
+  bool showPassword = false;
   late Config config;
   late TextEditingController nameController;
   late TextEditingController usernameController;
@@ -68,11 +69,19 @@ class NewConfigState extends State<NewConfig> {
           ),
           const SizedBox(height: 10),
           TextField(
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              border: const OutlineInputBorder(),
               labelText: 'Password',
+              suffixIcon: IconButton(
+                onPressed: (() => setState(() {
+                  showPassword = !showPassword;
+                })),
+                icon: showPassword
+                    ? Icon(Icons.visibility_off)
+                    : Icon(Icons.remove_red_eye),
+              ),
             ),
-            obscureText: true,
+            obscureText: !showPassword,
             enableSuggestions: false,
             autocorrect: false,
             controller: passwordController,
