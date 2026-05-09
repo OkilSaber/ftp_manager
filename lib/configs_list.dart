@@ -1,10 +1,14 @@
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart' show CupertinoPageRoute;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:ftp_manager/types/config.dart';
 import 'package:hive_flutter/adapters.dart';
 
 import 'new_config.dart';
+import 'theme/app_colors.dart';
+import 'widgets/animated_list_item.dart';
+import 'widgets/glass_card.dart';
+import 'widgets/gradient_scaffold.dart';
 
 class ConfigsList extends StatefulWidget {
   const ConfigsList({super.key});
@@ -15,116 +19,216 @@ class ConfigsList extends StatefulWidget {
 
 class _ConfigsListState extends State<ConfigsList> {
   final Box box = Hive.box<Config>('FTPConfigs');
-  late List<Config> configs;
-  late List<Widget> configTiles;
+  late List<Config> configs = [];
 
   void updateConfigs() {
     setState(() => configs = box.values.toList().cast<Config>());
   }
 
-  void updateConfigsTiles() {
-    setState(() => configTiles = configs.map((config) {
-          return GestureDetector(
-            onLongPress: () {
-              showDialog(
-                context: context,
-                builder: (context) => CupertinoAlertDialog(
-                  title: const Text("Delete config?"),
-                  content: const Text(
-                      "Are you sure you want to delete this config?"),
-                  actions: [
-                    CupertinoDialogAction(
-                      child: const Text("Cancel"),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    CupertinoDialogAction(
-                      child: const Text("Delete"),
-                      onPressed: () {
-                        box.deleteAt(box.values.toList().indexOf(config));
-                        updateConfigs();
-                        updateConfigsTiles();
-                        Navigator.pop(context);
-                      },
-                    ),
-                  ],
-                ),
-              );
-            },
-            child: CupertinoListTile(
-              onTap: () => Navigator.push(
-                context,
-                CupertinoPageRoute(
-                  builder: (context) => NewConfig(
-                    edit: true,
-                    config: config,
-                  ),
-                ),
-              ).then((value) {
-                updateConfigs();
-                updateConfigsTiles();
-              }),
-              title: Text(
-                config.name,
-                style: TextStyle(
-                  fontSize: 20,
-                  color: MediaQuery.of(context).platformBrightness ==
-                          Brightness.dark
-                      ? Colors.white
-                      : Colors.black,
-                ),
-              ),
-              subtitle: Text(config.host),
-              trailing: Text(config.port.toString()),
+  void _showDeleteDialog(Config config) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Delete '${config.name}'?"),
+        content: const Text("This connection will be permanently removed."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.errorRed,
             ),
-          );
-        }).toList());
+            onPressed: () {
+              box.deleteAt(box.values.toList().indexOf(config));
+              updateConfigs();
+              Navigator.pop(context);
+            },
+            child: const Text("Delete"),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   void initState() {
     SchedulerBinding.instance.addPostFrameCallback((_) {
       updateConfigs();
-      updateConfigsTiles();
     });
     super.initState();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accentColor = isDark ? AppColors.iceBlue : AppColors.forestGreenLight;
+
+    return GradientScaffold(
       appBar: AppBar(
         title: const Text("Configurations"),
         centerTitle: true,
-        elevation: 0,
         actions: [
           IconButton(
-            onPressed: () => {
-              Navigator.push(
-                context,
-                CupertinoPageRoute(
-                  builder: (context) => NewConfig(
-                    config: Config(
-                      name: "",
-                      username: "",
-                      host: "",
-                      password: "",
-                      port: 21,
-                    ),
+            onPressed: () => Navigator.push(
+              context,
+              CupertinoPageRoute(
+                builder: (context) => NewConfig(
+                  config: Config(
+                    name: "",
+                    username: "",
+                    host: "",
+                    password: "",
+                    port: 21,
                   ),
                 ),
-              ).then((value) {
-                updateConfigs();
-                updateConfigsTiles();
-              })
-            },
+              ),
+            ).then((_) => updateConfigs()),
             icon: const Icon(Icons.add_rounded),
           ),
         ],
       ),
-      body: CupertinoListSection(
-        header: const Text("Editer ou supprimer les configurations"),
-        children: configTiles,
-      ),
+      body: configs.isEmpty
+          ? SafeArea(
+              child: Center(
+                child: AnimatedListItem(
+                  index: 0,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.dns_rounded,
+                          size: 64,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.4)),
+                      const SizedBox(height: 16),
+                      Text("No configurations",
+                          style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      Text("Tap + to add a new connection",
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              itemCount: configs.length + 1,
+              itemBuilder: (context, index) {
+                if (index == 0) {
+                  return SafeArea(
+                    bottom: false,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: GlassCard(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Saved Connections",
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              "${configs.length} server${configs.length != 1 ? 's' : ''}",
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                final config = configs[index - 1];
+                return AnimatedListItem(
+                  index: index,
+                  child: GlassCard(
+                    blur: 0,
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        CupertinoPageRoute(
+                          builder: (context) => NewConfig(edit: true, config: config),
+                        ),
+                      ).then((_) => updateConfigs()),
+                      onLongPress: () => _showDeleteDialog(config),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              gradient: LinearGradient(
+                                colors: isDark
+                                    ? [AppColors.mintAccent, AppColors.iceBlue]
+                                    : [AppColors.forestGreen, AppColors.forestGreenLight],
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.dns_rounded,
+                              size: 20,
+                              color: isDark
+                                  ? AppColors.darkBackground
+                                  : Colors.white,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  config.name,
+                                  style: Theme.of(context).textTheme.titleMedium,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  config.host,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? AppColors.darkSurfaceVariant
+                                      : AppColors.lightSurfaceVariant,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  ":${config.port}",
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelSmall
+                                      ?.copyWith(color: accentColor),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Icon(Icons.more_vert_rounded,
+                                  size: 16,
+                                  color: Theme.of(context).colorScheme.onSurface),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }

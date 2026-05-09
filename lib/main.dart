@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'home_page.dart';
 import 'types/config.dart';
+import 'theme/app_theme.dart';
 
 void main() async {
   Hive.registerAdapter(ConfigAdapter());
@@ -20,7 +21,10 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'FTP Client',
-      theme: ThemeData(brightness: MediaQuery.of(context).platformBrightness),
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme(),
+      darkTheme: AppTheme.darkTheme(),
+      themeMode: ThemeMode.system,
       home: const HomePage(),
     );
   }
