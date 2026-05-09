@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:ftp_manager/download_dialog.dart';
+import 'package:ftp_manager/image_viewer.dart';
+import 'package:ftp_manager/media_cache.dart';
+import 'package:ftp_manager/video_viewer.dart';
 import 'package:ftp_manager/types/config.dart';
 import 'package:ftpconnect/ftpConnect.dart';
 import 'package:ftpconnect/ftpconnect.dart';
@@ -30,6 +33,7 @@ class FileView extends StatefulWidget {
 class _FileViewState extends State<FileView> with WidgetsBindingObserver {
   late FTPConnect ftpConnect;
   bool connected = false;
+  bool _suppressDisconnect = false;
   List<FTPFile> files = [];
   String currentDirectory = "/";
   bool inSelection = false;
@@ -41,10 +45,14 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
   // View options
   SortOption _sortOption = SortOption.nameAsc;
   bool _hideHidden = true;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   List<FTPFile> get _visibleFiles {
+    final q = _searchQuery.toLowerCase();
     var result = files.where((f) {
       if (_hideHidden && f.entry.name.startsWith('.')) return false;
+      if (q.isNotEmpty && !f.entry.name.toLowerCase().contains(q)) return false;
       return true;
     }).toList();
 
@@ -55,9 +63,13 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
 
       switch (_sortOption) {
         case SortOption.nameAsc:
-          return a.entry.name.toLowerCase().compareTo(b.entry.name.toLowerCase());
+          return a.entry.name.toLowerCase().compareTo(
+            b.entry.name.toLowerCase(),
+          );
         case SortOption.nameDesc:
-          return b.entry.name.toLowerCase().compareTo(a.entry.name.toLowerCase());
+          return b.entry.name.toLowerCase().compareTo(
+            a.entry.name.toLowerCase(),
+          );
         case SortOption.sizeAsc:
           return (a.entry.size ?? 0).compareTo(b.entry.size ?? 0);
         case SortOption.sizeDesc:
@@ -76,23 +88,56 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
           if (at == null) return 1;
           if (bt == null) return -1;
           return at.compareTo(bt);
+        case SortOption.typeAsc:
+          final cmp = _extensionOf(a.entry.name)
+              .compareTo(_extensionOf(b.entry.name));
+          return cmp != 0
+              ? cmp
+              : a.entry.name.toLowerCase().compareTo(
+                  b.entry.name.toLowerCase(),
+                );
+        case SortOption.typeDesc:
+          final cmp = _extensionOf(b.entry.name)
+              .compareTo(_extensionOf(a.entry.name));
+          return cmp != 0
+              ? cmp
+              : a.entry.name.toLowerCase().compareTo(
+                  b.entry.name.toLowerCase(),
+                );
       }
     });
     return result;
   }
 
-  Future<void> loadDirectory({bool pop = true, bool forceRefresh = false}) async {
-    await ftpConnect.listDirectoryContent().then((valueFiles) {
-      ftpConnect.currentDirectory().then((value) {
-        final loaded = valueFiles.map((e) => FTPFile(e)).toList();
-        _dirCache[value] = loaded;
-        setState(() {
-          currentDirectory = value;
-          files = loaded;
-        });
-        if (pop) Navigator.pop(context);
-      });
+  Future<void> loadDirectory({
+    bool pop = true,
+    bool forceRefresh = false,
+  }) async {
+    Future<List<FTPEntry>> attempt() => ftpConnect.listDirectoryContent();
+
+    List<FTPEntry> valueFiles;
+    try {
+      valueFiles = await attempt();
+    } on FTPConnectException catch (e) {
+      if (e.message.contains('Passive Mode') || e.message.contains('425')) {
+        ftpConnect.transferMode = TransferMode.active;
+        valueFiles = await attempt();
+      } else {
+        ftpConnect.listCommand = ListCommand.list;
+        valueFiles = await attempt();
+      }
+    } catch (_) {
+      ftpConnect.listCommand = ListCommand.list;
+      valueFiles = await attempt();
+    }
+    final value = await ftpConnect.currentDirectory();
+    final loaded = valueFiles.map((e) => FTPFile(e)).toList();
+    _dirCache[value] = loaded;
+    setState(() {
+      currentDirectory = value;
+      files = loaded;
     });
+    if (pop) Navigator.pop(context);
   }
 
   String _resolvePath(String dir) {
@@ -134,16 +179,32 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              _infoRow(Icons.category_outlined,
-                  "Type", entry.type == FTPEntryType.dir ? "Directory" : "File"),
-              _infoRow(Icons.data_usage_rounded, "Size",
-                  formatBytes(entry.size ?? 0)),
-              _infoRow(Icons.person_outline_rounded, "Owner", entry.owner ?? "-"),
+              _infoRow(
+                Icons.category_outlined,
+                "Type",
+                entry.type == FTPEntryType.dir ? "Directory" : "File",
+              ),
+              _infoRow(
+                Icons.data_usage_rounded,
+                "Size",
+                formatBytes(entry.size ?? 0),
+              ),
+              _infoRow(
+                Icons.person_outline_rounded,
+                "Owner",
+                entry.owner ?? "-",
+              ),
               _infoRow(Icons.group_outlined, "Group", entry.group ?? "-"),
               _infoRow(
-                  Icons.lock_outline_rounded, "Permissions", entry.permission ?? "-"),
-              _infoRow(Icons.schedule_rounded, "Modified",
-                  entry.modifyTime?.toString() ?? "-"),
+                Icons.lock_outline_rounded,
+                "Permissions",
+                entry.permission ?? "-",
+              ),
+              _infoRow(
+                Icons.schedule_rounded,
+                "Modified",
+                entry.modifyTime?.toString() ?? "-",
+              ),
             ],
           ),
           actionsOverflowAlignment: OverflowBarAlignment.start,
@@ -154,29 +215,48 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
               label: const Text("Download"),
               onPressed: () async {
                 await _pendingNavigation;
-                late Directory localDirectory;
-                if (Platform.isIOS) {
-                  localDirectory = await getApplicationDocumentsDirectory();
-                } else {
-                  String? path = await FilePicker.platform.getDirectoryPath();
-                  if (path != null) {
-                    localDirectory = Directory.fromUri(Uri.parse(path));
+                _suppressDisconnect = true;
+                try {
+                  late Directory localDirectory;
+                  if (Platform.isIOS) {
+                    localDirectory = await getApplicationDocumentsDirectory();
                   } else {
-                    return;
+                    String? path = await FilePicker.platform.getDirectoryPath();
+                    if (path != null) {
+                      localDirectory = Directory.fromUri(Uri.parse(path));
+                    } else {
+                      return;
+                    }
                   }
-                }
-                if (entry.type == FTPEntryType.dir) {
-                  await directoryDownloader(
-                    localDirectory: localDirectory,
-                    remoteDirectory: entry.name,
-                  );
-                } else {
-                  File file = File("${localDirectory.path}/${entry.name}");
-                  await showDownloaderDialog(
-                    context,
-                    name: entry.name,
-                    file: file,
-                  ).then((res) => Navigator.pop(context));
+                  if (entry.type == FTPEntryType.dir) {
+                    await directoryDownloader(
+                      localDirectory: localDirectory,
+                      remoteDirectory: entry.name,
+                    );
+                  } else {
+                    File file = File("${localDirectory.path}/${entry.name}");
+                    final cached = findCachedMedia(
+                        widget.config, currentDirectory, entry);
+                    if (cached != null) {
+                      await cached.copy(file.path);
+                      if (mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text("Saved ${entry.name} from cache"),
+                          ),
+                        );
+                      }
+                    } else {
+                      await showDownloaderDialog(
+                        context,
+                        name: entry.name,
+                        file: file,
+                      ).then((res) => Navigator.pop(context));
+                    }
+                  }
+                } finally {
+                  _suppressDisconnect = false;
                 }
               },
             ),
@@ -198,13 +278,16 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
                         ),
                         TextButton(
                           style: TextButton.styleFrom(
-                              foregroundColor: AppColors.errorRed),
+                            foregroundColor: AppColors.errorRed,
+                          ),
                           onPressed: () async {
                             await _pendingNavigation;
                             showLoaderDialog(context, message: "Deleting...");
                             _dirCache.remove(currentDirectory);
                             if (entry.type == FTPEntryType.dir) {
-                              ftpConnect.deleteDirectory(entry.name).then((value) {
+                              ftpConnect.deleteDirectory(entry.name).then((
+                                value,
+                              ) {
                                 Navigator.pop(context);
                                 Navigator.pop(context);
                                 showLoaderDialog(context);
@@ -253,14 +336,14 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 16,
-              color: Theme.of(context).colorScheme.secondary),
+          Icon(icon, size: 16, color: Theme.of(context).colorScheme.secondary),
           const SizedBox(width: 8),
-          Text("$label: ",
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(fontWeight: FontWeight.w600)),
+          Text(
+            "$label: ",
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+          ),
           Expanded(
             child: Text(value, style: Theme.of(context).textTheme.bodySmall),
           ),
@@ -269,8 +352,7 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
     );
   }
 
-  void showLoaderDialog(BuildContext context,
-      {String message = "Loading..."}) {
+  void showLoaderDialog(BuildContext context, {String message = "Loading..."}) {
     showDialog(
       barrierDismissible: false,
       context: context,
@@ -352,8 +434,11 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline_rounded,
-                  size: 48, color: AppColors.errorRed),
+              Icon(
+                Icons.error_outline_rounded,
+                size: 48,
+                color: AppColors.errorRed,
+              ),
               const SizedBox(height: 12),
               Text("Code: ${error.response} - ${error.message}"),
             ],
@@ -371,41 +456,41 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
 
   Future<void> uploadFile() async {
     await _pendingNavigation;
-    if (Platform.isAndroid) {
-      Permission.manageExternalStorage.request().then((value) {
-        if (value.isGranted) {
-          FilePicker.platform.pickFiles(allowMultiple: true).then(
-            (FilePickerResult? value) async {
-              if (value != null) {
-                showLoaderDialog(context, message: "Uploading...");
-                for (var i = 0; i < value.files.length; i++) {
-                  File chosenFile = File(value.files[i].path!);
-                  await ftpConnect.uploadFileWithRetry(
-                    chosenFile,
-                    pRetryCount: 5,
-                  );
-                }
-                _dirCache.remove(currentDirectory);
-                await loadDirectory();
-              }
-            },
-          );
-        }
-      });
-    } else if (Platform.isIOS) {
-      FilePicker.platform.pickFiles(allowMultiple: true).then(
-        (FilePickerResult? value) async {
-          if (value != null) {
-            showLoaderDialog(context, message: "Uploading...");
-            for (var i = 0; i < value.files.length; i++) {
-              File chosenFile = File(value.files[i].path!);
-              await ftpConnect.uploadFileWithRetry(chosenFile, pRetryCount: 5);
-            }
-            _dirCache.remove(currentDirectory);
-            await loadDirectory();
+    Future<void> uploadPicked(FilePickerResult result) async {
+      showLoaderDialog(context, message: "Uploading...");
+      int skipped = 0;
+      _suppressDisconnect = true;
+      try {
+        for (final picked in result.files) {
+          final path = picked.path;
+          if (path == null) {
+            skipped++;
+            continue;
           }
-        },
-      );
+          await ftpConnect.uploadFileWithRetry(File(path), pRetryCount: 5);
+        }
+        _dirCache.remove(currentDirectory);
+        await loadDirectory();
+      } finally {
+        _suppressDisconnect = false;
+      }
+      if (skipped > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Skipped $skipped file(s) with no readable path")),
+        );
+      }
+    }
+
+    _suppressDisconnect = true;
+    try {
+      if (Platform.isAndroid) {
+        final status = await Permission.manageExternalStorage.request();
+        if (!status.isGranted) return;
+      }
+      final result = await FilePicker.platform.pickFiles(allowMultiple: true);
+      if (result != null) await uploadPicked(result);
+    } finally {
+      _suppressDisconnect = false;
     }
   }
 
@@ -442,8 +527,9 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
     required Directory localDirectory,
     required String remoteDirectory,
   }) async {
-    Directory newLocalDirectory =
-        Directory("${localDirectory.path}/$remoteDirectory");
+    Directory newLocalDirectory = Directory(
+      "${localDirectory.path}/$remoteDirectory",
+    );
     newLocalDirectory.createSync();
     bool allowed = await ftpConnect.changeDirectory(remoteDirectory);
     if (allowed) {
@@ -468,9 +554,33 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
     }
   }
 
+  static const _imageExtensions = {
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp',
+  };
+
+  static const _videoExtensions = {
+    'mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi', 'wmv',
+  };
+
+  bool _isVideo(String name) {
+    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+    return _videoExtensions.contains(ext);
+  }
+
+  String _extensionOf(String name) {
+    final dot = name.lastIndexOf('.');
+    if (dot <= 0 || dot == name.length - 1) return '';
+    return name.substring(dot + 1).toLowerCase();
+  }
+
+  bool _isImage(String name) {
+    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+    return _imageExtensions.contains(ext);
+  }
+
   IconData _fileIcon(String name) {
     final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].contains(ext)) {
+    if (_imageExtensions.contains(ext)) {
       return Icons.image_outlined;
     }
     if (['mp4', 'mov', 'avi', 'mkv', 'wmv'].contains(ext)) {
@@ -483,8 +593,20 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
     if (['zip', 'tar', 'gz', 'rar', '7z'].contains(ext)) {
       return Icons.folder_zip_outlined;
     }
-    if (['dart', 'js', 'ts', 'py', 'json', 'yaml', 'yml', 'xml', 'html',
-        'css', 'sh', 'md'].contains(ext)) {
+    if ([
+      'dart',
+      'js',
+      'ts',
+      'py',
+      'json',
+      'yaml',
+      'yml',
+      'xml',
+      'html',
+      'css',
+      'sh',
+      'md',
+    ].contains(ext)) {
       return Icons.code_outlined;
     }
     return Icons.insert_drive_file_outlined;
@@ -506,14 +628,16 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
 
       ftpConnect
           .connect()
-          .then((value) {
+          .then((value) async {
+            await ftpConnect.setTransferType(TransferType.binary);
             loadDirectory();
             setState(() => connected = true);
           })
           .catchError((error) {
             Navigator.pop(context);
-            showErrorDialog(error: error)
-                .then((value) => Navigator.pop(context));
+            showErrorDialog(
+              error: error,
+            ).then((value) => Navigator.pop(context));
           });
     });
   }
@@ -523,29 +647,30 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
     setState(() => lastState = state);
     switch (state) {
       case AppLifecycleState.resumed:
+        if (_suppressDisconnect) break;
+        Future<void> reconnect() async {
+          await ftpConnect.connect();
+          await ftpConnect.setTransferType(TransferType.binary);
+          if (mounted) setState(() => connected = true);
+        }
         if (!connected) {
-          ftpConnect
-              .connect()
-              .then((value) => setState(() => connected = false));
+          reconnect();
         } else {
           ftpConnect
               .disconnect()
               .then((res) => setState(() => connected = false))
-              .then((value) {
-            ftpConnect
-                .connect()
-                .then((value) => setState(() => connected = false));
-          });
+              .then((value) => reconnect());
         }
         break;
       case AppLifecycleState.inactive:
+        break;
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
-        if (connected) {
-          ftpConnect
-              .disconnect()
-              .then((res) => setState(() => connected = false));
+        if (connected && !_suppressDisconnect) {
+          ftpConnect.disconnect().then(
+            (res) => setState(() => connected = false),
+          );
         }
         break;
     }
@@ -553,6 +678,7 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _searchController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -561,7 +687,9 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = isDark ? AppColors.mintAccent : AppColors.forestGreen;
-    final secondaryColor = isDark ? AppColors.iceBlue : AppColors.forestGreenLight;
+    final secondaryColor = isDark
+        ? AppColors.iceBlue
+        : AppColors.forestGreenLight;
 
     return GradientScaffold(
       appBar: AppBar(
@@ -578,9 +706,7 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
           child: Container(
             height: 1,
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [primaryColor, secondaryColor],
-              ),
+              gradient: LinearGradient(colors: [primaryColor, secondaryColor]),
             ),
           ),
         ),
@@ -589,37 +715,50 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
                 IconButton(
                   onPressed: () async {
                     await _pendingNavigation;
-                    late Directory localDirectory;
-                    if (Platform.isIOS) {
-                      localDirectory = await getApplicationDocumentsDirectory();
-                    } else {
-                      String? path =
-                          await FilePicker.platform.getDirectoryPath();
-                      if (path != null) {
-                        localDirectory = Directory.fromUri(Uri.parse(path));
+                    _suppressDisconnect = true;
+                    try {
+                      late Directory localDirectory;
+                      if (Platform.isIOS) {
+                        localDirectory =
+                            await getApplicationDocumentsDirectory();
                       } else {
-                        return;
-                      }
-                    }
-                    for (var i = 0; i < files.length; i++) {
-                      if (files[i].selected) {
-                        if (files[i].entry.type == FTPEntryType.dir) {
-                          await directoryDownloader(
-                            localDirectory: localDirectory,
-                            remoteDirectory: files[i].entry.name,
-                          );
+                        String? path = await FilePicker.platform
+                            .getDirectoryPath();
+                        if (path != null) {
+                          localDirectory = Directory.fromUri(Uri.parse(path));
                         } else {
-                          File file = File(
-                              "${localDirectory.path}/${files[i].entry.name}");
-                          await showDownloaderDialog(
-                            context,
-                            name: files[i].entry.name,
-                            file: file,
-                          );
+                          return;
                         }
                       }
+                      for (var i = 0; i < files.length; i++) {
+                        if (files[i].selected) {
+                          if (files[i].entry.type == FTPEntryType.dir) {
+                            await directoryDownloader(
+                              localDirectory: localDirectory,
+                              remoteDirectory: files[i].entry.name,
+                            );
+                          } else {
+                            File file = File(
+                              "${localDirectory.path}/${files[i].entry.name}",
+                            );
+                            final cached = findCachedMedia(widget.config,
+                                currentDirectory, files[i].entry);
+                            if (cached != null) {
+                              await cached.copy(file.path);
+                            } else {
+                              await showDownloaderDialog(
+                                context,
+                                name: files[i].entry.name,
+                                file: file,
+                              );
+                            }
+                          }
+                        }
+                      }
+                      leaveSelection();
+                    } finally {
+                      _suppressDisconnect = false;
                     }
-                    leaveSelection();
                   },
                   icon: const Icon(Icons.download_rounded),
                 ),
@@ -633,8 +772,9 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
                       for (var i = 0; i < files.length; i++) {
                         if (files[i].selected) {
                           if (files[i].entry.type == FTPEntryType.dir) {
-                            await ftpConnect
-                                .deleteDirectory(files[i].entry.name);
+                            await ftpConnect.deleteDirectory(
+                              files[i].entry.name,
+                            );
                           } else {
                             await ftpConnect.deleteFile(files[i].entry.name);
                           }
@@ -675,47 +815,103 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
                 ),
                 PopupMenuButton<Object>(
                   icon: const Icon(Icons.more_vert_rounded),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   itemBuilder: (context) => [
                     const PopupMenuItem(
                       enabled: false,
-                      child: Text('Sort by', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                      child: Text(
+                        'Sort by',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                     ...[
-                      (SortOption.nameAsc,  Icons.sort_by_alpha_rounded,      'Name A → Z'),
-                      (SortOption.nameDesc, Icons.sort_by_alpha_rounded,      'Name Z → A'),
-                      (SortOption.sizeAsc,  Icons.arrow_upward_rounded,       'Size small → large'),
-                      (SortOption.sizeDesc, Icons.arrow_downward_rounded,     'Size large → small'),
-                      (SortOption.dateDesc, Icons.access_time_rounded,        'Newest first'),
-                      (SortOption.dateAsc,  Icons.access_time_outlined,       'Oldest first'),
-                    ].map((t) => PopupMenuItem<Object>(
-                      value: t.$1,
-                      child: Row(children: [
-                        Icon(t.$2, size: 16),
-                        const SizedBox(width: 10),
-                        Text(t.$3),
-                        if (_sortOption == t.$1) ...[
-                          const Spacer(),
-                          Icon(Icons.check_rounded, size: 16,
-                              color: Theme.of(context).colorScheme.primary),
-                        ],
-                      ]),
-                    )),
+                      (
+                        SortOption.nameAsc,
+                        Icons.sort_by_alpha_rounded,
+                        'Name A → Z',
+                      ),
+                      (
+                        SortOption.nameDesc,
+                        Icons.sort_by_alpha_rounded,
+                        'Name Z → A',
+                      ),
+                      (
+                        SortOption.sizeAsc,
+                        Icons.arrow_upward_rounded,
+                        'Size small → large',
+                      ),
+                      (
+                        SortOption.sizeDesc,
+                        Icons.arrow_downward_rounded,
+                        'Size large → small',
+                      ),
+                      (
+                        SortOption.dateDesc,
+                        Icons.access_time_rounded,
+                        'Newest first',
+                      ),
+                      (
+                        SortOption.dateAsc,
+                        Icons.access_time_outlined,
+                        'Oldest first',
+                      ),
+                      (
+                        SortOption.typeAsc,
+                        Icons.category_rounded,
+                        'Type A → Z',
+                      ),
+                      (
+                        SortOption.typeDesc,
+                        Icons.category_outlined,
+                        'Type Z → A',
+                      ),
+                    ].map(
+                      (t) => PopupMenuItem<Object>(
+                        value: t.$1,
+                        child: Row(
+                          children: [
+                            Icon(t.$2, size: 16),
+                            const SizedBox(width: 10),
+                            Text(t.$3),
+                            if (_sortOption == t.$1) ...[
+                              const Spacer(),
+                              Icon(
+                                Icons.check_rounded,
+                                size: 16,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
                     const PopupMenuDivider(),
                     PopupMenuItem<Object>(
                       value: 'toggleHidden',
-                      child: Row(children: [
-                        Icon(
-                          _hideHidden ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 10),
-                        const Text('Hide dotfiles'),
-                        const Spacer(),
-                        if (_hideHidden)
-                          Icon(Icons.check_rounded, size: 16,
-                              color: Theme.of(context).colorScheme.primary),
-                      ]),
+                      child: Row(
+                        children: [
+                          Icon(
+                            _hideHidden
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 10),
+                          const Text('Hide dotfiles'),
+                          const Spacer(),
+                          if (_hideHidden)
+                            Icon(
+                              Icons.check_rounded,
+                              size: 16,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                        ],
+                      ),
                     ),
                   ],
                   onSelected: (value) {
@@ -738,8 +934,10 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
               child: GlassCard(
                 blur: 12,
                 borderRadius: 14,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
                 child: Row(
                   children: [
                     Icon(Icons.folder_rounded, color: secondaryColor, size: 18),
@@ -755,18 +953,55 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
                 ),
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+              child: GlassCard(
+                blur: 12,
+                borderRadius: 14,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (value) => setState(() => _searchQuery = value),
+                  textInputAction: TextInputAction.search,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  decoration: InputDecoration(
+                    border: InputBorder.none,
+                    isDense: true,
+                    icon: Icon(
+                      Icons.search_rounded,
+                      color: secondaryColor,
+                      size: 18,
+                    ),
+                    hintText: 'Search in this folder',
+                    suffixIcon: _searchQuery.isEmpty
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                          ),
+                  ),
+                ),
+              ),
+            ),
             if (currentDirectory != "/" && !inSelection)
               AnimatedListItem(
                 index: 0,
                 child: GlassCard(
                   blur: 0,
                   margin: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 4),
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
                   padding: EdgeInsets.zero,
                   borderRadius: 14,
                   child: ListTile(
-                    leading: Icon(Icons.arrow_upward_rounded,
-                        color: secondaryColor),
+                    leading: Icon(
+                      Icons.arrow_upward_rounded,
+                      color: secondaryColor,
+                    ),
                     title: const Text(".."),
                     onTap: () => changeDirectory(".."),
                   ),
@@ -792,13 +1027,17 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
                               colors: isDark
                                   ? [
                                       AppColors.iceBlue.withValues(alpha: 0.7),
-                                      AppColors.mintAccent.withValues(alpha: 0.7),
+                                      AppColors.mintAccent.withValues(
+                                        alpha: 0.7,
+                                      ),
                                     ]
                                   : [
-                                      AppColors.forestGreen
-                                          .withValues(alpha: 0.8),
-                                      AppColors.forestGreenLight
-                                          .withValues(alpha: 0.8),
+                                      AppColors.forestGreen.withValues(
+                                        alpha: 0.8,
+                                      ),
+                                      AppColors.forestGreenLight.withValues(
+                                        alpha: 0.8,
+                                      ),
                                     ],
                             ),
                           ),
@@ -810,8 +1049,7 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
                                 : Colors.white,
                           ),
                         )
-                      : Icon(_fileIcon(file.entry.name),
-                          color: secondaryColor);
+                      : Icon(_fileIcon(file.entry.name), color: secondaryColor);
 
                   return AnimatedListItem(
                     index: index + 1,
@@ -837,40 +1075,86 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
                             : Text(formatBytes(file.entry.size ?? 0)),
                         trailing: !inSelection
                             ? IconButton(
-                                icon: const Icon(
-                                    Icons.info_outline_rounded),
-                                onPressed: () =>
-                                    infoDialog(file.entry),
+                                icon: const Icon(Icons.info_outline_rounded),
+                                onPressed: () => infoDialog(file.entry),
                               )
                             : (file.selected
-                                ? IconButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        file.selected = false;
-                                        allSelected = false;
-                                      });
-                                    },
-                                    icon: Icon(Icons.check_box_outlined,
-                                        color: primaryColor),
-                                  )
-                                : IconButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        file.selected = true;
-                                        allSelected = checkSelection();
-                                      });
-                                    },
-                                    icon: const Icon(
-                                        Icons.check_box_outline_blank_rounded),
-                                  )),
-                        onTap: () {
-                          if (isDir && !inSelection) {
-                            changeDirectory(file.entry.name);
-                          } else if (inSelection) {
+                                  ? IconButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          file.selected = false;
+                                          allSelected = false;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        Icons.check_box_outlined,
+                                        color: primaryColor,
+                                      ),
+                                    )
+                                  : IconButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          file.selected = true;
+                                          allSelected = checkSelection();
+                                        });
+                                      },
+                                      icon: const Icon(
+                                        Icons.check_box_outline_blank_rounded,
+                                      ),
+                                    )),
+                        onTap: () async {
+                          if (inSelection) {
                             setState(() {
                               file.selected = !file.selected;
                               allSelected = checkSelection();
                             });
+                          } else if (isDir) {
+                            changeDirectory(file.entry.name);
+                          } else if (_isImage(file.entry.name)) {
+                            await _pendingNavigation;
+                            if (!mounted) return;
+                            final imageEntries = _visibleFiles
+                                .where((f) =>
+                                    f.entry.type != FTPEntryType.dir &&
+                                    _isImage(f.entry.name))
+                                .map((f) => f.entry)
+                                .toList();
+                            final startIndex =
+                                imageEntries.indexWhere(
+                                    (e) => e.name == file.entry.name);
+                            if (startIndex == -1) return;
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => ImageViewerPage(
+                                  config: widget.config,
+                                  workingDirectory: currentDirectory,
+                                  images: imageEntries,
+                                  initialIndex: startIndex,
+                                ),
+                              ),
+                            );
+                          } else if (_isVideo(file.entry.name)) {
+                            await _pendingNavigation;
+                            if (!mounted) return;
+                            final videoEntries = _visibleFiles
+                                .where((f) =>
+                                    f.entry.type != FTPEntryType.dir &&
+                                    _isVideo(f.entry.name))
+                                .map((f) => f.entry)
+                                .toList();
+                            final startIndex = videoEntries.indexWhere(
+                                (e) => e.name == file.entry.name);
+                            if (startIndex == -1) return;
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => VideoViewerPage(
+                                  config: widget.config,
+                                  workingDirectory: currentDirectory,
+                                  videos: videoEntries,
+                                  initialIndex: startIndex,
+                                ),
+                              ),
+                            );
                           }
                         },
                       ),
@@ -886,4 +1170,13 @@ class _FileViewState extends State<FileView> with WidgetsBindingObserver {
   }
 }
 
-enum SortOption { nameAsc, nameDesc, sizeAsc, sizeDesc, dateAsc, dateDesc }
+enum SortOption {
+  nameAsc,
+  nameDesc,
+  sizeAsc,
+  sizeDesc,
+  dateAsc,
+  dateDesc,
+  typeAsc,
+  typeDesc,
+}
